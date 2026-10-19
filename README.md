@@ -33,7 +33,7 @@ Instead of bundling a static wordlist and bloating the tool, it **fetches an upd
 
 **Key technical goodies:**
 - Multithreaded scanning using curl
-- Proper HTTPS and `www.` handling to fix SSL issues
+- Smart HTTPS + `www.` handling: tries both the apex and the `www.` form and scans whichever actually answers, so apex-only domains work too (controlled with `-w`)
 - Real redirect following (`-L` curl flag) bypasses WAFs and Cloudflare protections and log only the valid 200 Responses
 - No proxychains/Tor dependency (due to their unreliability for professional offensive operations)
 - Optional randomized User-Agent headers (`-ua`) to simulate real traffic
@@ -47,8 +47,8 @@ AdminPBuster focuses on **speed**, **reliability**, and **accuracy** while stayi
 - **Fetch Updated Wordlist**  
   Downloads the latest `magic_admin_paths.txt` from GitHub automatically.
 
-- **Prepare Target Domain**  
-  Adds `www.` if missing, forces HTTPS, solving common SSL and cert mismatch problems.
+- **Resolve Reachable Bases**  
+  Tries the apex and the `www.` form over HTTPS and scans whichever answers, so a domain with no `www` host is still scanned (and a dead target exits cleanly instead of flooding connection-failed lines). Use `-w both` (default), `-w force` (old www-only behaviour) or `-w no` (apex only).
 
 - **Build and Launch Curl Requests**  
   Constructs lightweight curl calls to quickly test admin paths with correct flags.
@@ -76,7 +76,7 @@ AdminPBuster focuses on **speed**, **reliability**, and **accuracy** while stayi
 - Bypasses Cloudflare and WordPress redirects properly
 - Realistic User-Agent randomization with `-ua`
 - Multithreaded scanning (default 5 threads, customizable)
-- SSL/TLS handling built-in (always uses HTTPS + www)
+- SSL/TLS handling built-in (HTTPS; tries apex and `www`, `-w` to control)
 - Color-coded live scan results
 - Only real 200 OK pages saved
 - Fancy banners, motivational quotes, rainbow CLI styling, because we love colors!
@@ -101,7 +101,7 @@ This tool has been tested on Kali Linux
 1. Clone the repository:
    ```bash
    git clone https://github.com/blackhatethicalhacking/AdminPBuster.git
-   cd AdminPanelFetcher
+   cd AdminPBuster
    ```
 
 2. Make the installer executable:
@@ -140,6 +140,30 @@ Optionally with randomized User-Agent:
 ```bash
 ./AdminPBuster.py -t example.com -th 10 -ua
 ```
+
+Scan the apex only (skip the `www.` attempt), or keep the old www-only behaviour:
+
+```bash
+./AdminPBuster.py -t example.com -w no
+./AdminPBuster.py -t example.com -w force
+```
+
+Check the version:
+
+```bash
+./AdminPBuster.py --version
+```
+
+### Options
+
+| Flag | Description |
+|------|-------------|
+| `-t, --target` | Target domain (e.g. `example.com`) |
+| `-th, --threads` | Number of threads (default: 5) |
+| `-w, --www` | www handling: `both` (default, tries apex and `www.`), `force` (add `www.`), `no` (apex only) |
+| `-ua, --random-agent` | Use a random realistic User-Agent |
+| `-v, --version` | Show version and exit |
+| `-h, --help` | Show help and exit |
 
 ---
 
