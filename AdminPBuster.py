@@ -17,7 +17,7 @@ from termcolor import colored
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-VERSION = "3.0"
+VERSION = "3.1"
 AUTHOR = "Chris 'SaintDruG' Abou-Chabke"
 TEAM = "Black Hat Ethical Hacking"
 PATHS_URL = "https://raw.githubusercontent.com/blackhatethicalhacking/AdminPBuster/refs/heads/main/magic_admin_paths.txt"
@@ -79,7 +79,9 @@ def print_help_colored():
     print(colored("  -h, --help             ", "white") + "Show this help message and exit")
     print(colored("  -t, --target TARGET    ", "white") + "Target domain (e.g., example.com)")
     print(colored("  -th, --threads THREADS ", "white") + "Number of threads (default: 5)")
-    print(colored("  -ua, --random-agent    ", "white") + "Use random realistic User-Agent\n")
+    print(colored("  -w, --www MODE         ", "white") + "www handling: both (default), force, no")
+    print(colored("  -ua, --random-agent    ", "white") + "Use random realistic User-Agent")
+    print(colored("  -v, --version          ", "white") + "Show version and exit\n")
 
     print(colored("Written by ", "green") + colored("Chris 'SaintDruG' Abou-Chabke", "magenta") + colored(" for Black Hat Ethical Hacking", "green"))
     print(colored("© All Rights Reserved 2025 — Use For Ethical Testing Only.", "yellow"))
@@ -120,6 +122,32 @@ def clean_domain(domain_url):
     domain = parsed.netloc or parsed.path
     return domain.replace(":", "_")
 
+def clean_host(target):
+    parsed = urlparse(target if "://" in target else f"https://{target}")
+    return (parsed.netloc or parsed.path).strip("/")
+
+def resolve_bases(target, www_mode):
+    """Work out which base URLs actually answer, so an apex-only target is scanned instead of blindly forcing www.
+    (the old behaviour broke any domain without a www host). 'both' tries the apex and the www form, 'force' keeps
+    the old www-only behaviour, 'no' uses the apex only. Only reachable bases are kept."""
+    host = clean_host(target)
+    if www_mode == "no":
+        candidates = [host]
+    elif www_mode == "force":
+        candidates = [host if host.startswith("www.") else "www." + host]
+    else:  # both
+        candidates = [host] + ([] if host.startswith("www.") else ["www." + host])
+
+    bases = []
+    for h in dict.fromkeys(candidates):
+        url = f"https://{h}"
+        try:
+            requests.get(url, timeout=8, allow_redirects=True, verify=False)
+            bases.append(url)
+        except requests.RequestException:
+            pass
+    return bases
+
 def color_for_status(code):
     if code == "200":
         return "green"
@@ -132,17 +160,10 @@ def color_for_status(code):
     else:
         return "magenta"
 
-def scan_url(target_domain, path_queue, results, timeout=5, random_ua=False):
+def scan_url(url_queue, results, timeout=5, random_ua=False):
     global request_counter
-    while not path_queue.empty():
-        path = path_queue.get()
-
-        if not target_domain.startswith("www."):
-            fixed_domain = "www." + target_domain
-        else:
-            fixed_domain = target_domain
-
-        full_url = f"https://{fixed_domain.rstrip('/')}/{path.lstrip('/')}"
+    while not url_queue.empty():
+        full_url = url_queue.get()
 
         with counter_lock:
             request_counter += 1
@@ -171,13 +192,21 @@ def scan_url(target_domain, path_queue, results, timeout=5, random_ua=False):
         except subprocess.CalledProcessError:
             print(colored(f"[{number}] {full_url} -> (Connection Failed)", "red", attrs=["bold"]))
 
-        path_queue.task_done()
+        url_queue.task_done()
 
-def admin_panel_buster(target_domain, threads, random_ua):
+def admin_panel_buster(target_domain, threads, random_ua, www_mode="both"):
+    bases = resolve_bases(target_domain, www_mode)
+    if not bases:
+        print(colored(f"\n[!] {clean_host(target_domain)} is not reachable over HTTPS "
+                      f"(tried apex and www). Nothing to scan.", "red", attrs=["bold"]))
+        return
+    print(colored(f"[*] Scanning: {', '.join(bases)}", "cyan", attrs=["bold"]))
+
     paths = fetch_admin_paths()
     q = queue.Queue()
-    for path in paths:
-        q.put(path)
+    for base in bases:
+        for path in paths:
+            q.put(f"{base.rstrip('/')}/{path.lstrip('/')}")
 
     results = []
     thread_list = []
@@ -187,7 +216,7 @@ def admin_panel_buster(target_domain, threads, random_ua):
     output_file = os.path.join(domain_folder, "found_panels.txt")
 
     for _ in range(threads):
-        t = Thread(target=scan_url, args=(target_domain, q, results, 5, random_ua))
+        t = Thread(target=scan_url, args=(q, results, 5, random_ua))
         thread_list.append(t)
         t.start()
 
@@ -209,9 +238,16 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument("-t", "--target", help="Target domain (e.g., example.com)")
     parser.add_argument("-th", "--threads", type=int, default=5, help="Number of threads (default: 5)")
+    parser.add_argument("-w", "--www", choices=["both", "force", "no"], default="both",
+                        help="www handling: both=try apex and www. (default), force=add www., no=apex only")
     parser.add_argument("-ua", "--random-agent", action="store_true", help="Use random realistic User-Agent")
+    parser.add_argument("-v", "--version", action="store_true", help="Show version and exit")
     parser.add_argument("-h", "--help", action="store_true", help="Show help message and exit")
     ARGS = parser.parse_args()
+
+    if ARGS.version:
+        print(f"AdminPBuster {VERSION}")
+        sys.exit(0)
 
     if ARGS.help or not ARGS.target:
         print_help_colored()
@@ -220,4 +256,4 @@ if __name__ == "__main__":
     print_rainbow_banner()
     check_internet_connection()
     countdown()
-    admin_panel_buster(ARGS.target, ARGS.threads, ARGS.random_agent)
+    admin_panel_buster(ARGS.target, ARGS.threads, ARGS.random_agent, ARGS.www)
